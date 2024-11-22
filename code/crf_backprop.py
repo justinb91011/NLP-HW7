@@ -90,8 +90,11 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # corresponding entries of A and B.  In that case, those parameters in
         # WA and WB will be ignored.  They don't affect the training objective
         # and you don't need to initialize them to -inf or anything else.)
-
-        raise NotImplementedError   # you fill this in!
+        NEG_LAR = -999
+        with torch.no_grad():
+            self.WA[:, self.bos_t] = NEG_LARGE
+            self.WB[self.bos_t, :] = NEG_LARGE
+            self.WB[self.eos_t, :] = NEG_LARGE
        
         self.updateAB()  # update A and B potential matrices from new params
 
@@ -102,7 +105,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
             params=self.parameters(),  # all nn.Parameter objects that are stored in attributes of self
             lr=lr, weight_decay=weight_decay
         )
-        raise NotImplementedError   # you fill this in!
+        
 
     def count_params(self) -> None:
         paramcount = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -142,9 +145,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
     @override        
     def _zero_grad(self):
         # [docstring will be inherited from parent method]
-
-        # Look up how to do this with a PyTorch optimizer!
-        raise NotImplementedError   # you fill this in!
+        self.optimizer.zero_grad()
 
     @override
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
@@ -161,8 +162,14 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         #
         # Hint: You want to maximize the (regularized) log-probability. However,
         # PyTorch optimizers *minimize* functions by default.
-        
-        raise NotImplementedError   # you fill this in!
+
+        # Compute negative log-likelihood (since we want to maximize logprob)
+        loss = -self.logprob(sentence, corpus)
+        # Accumulate loss over the minibatch
+        if not hasattr(self, 'minibatch_loss'):
+            self.minibatch_loss = loss
+        else:
+            self.minibatch_loss += loss
 
     @override
     def logprob_gradient_step(self, lr: float) -> None:
@@ -171,7 +178,13 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # Look up how to do this with a PyTorch optimizer!
         # Basically, you want to take a step in the direction
         # of the accumulated gradient.
-        raise NotImplementedError   # you fill this in!
+
+        # Backpropagate the total minibatch loss
+        self.minibatch_loss.backward()
+        # Update parameters using the optimizer
+        self.optimizer.step()
+        # Clear the minibatch loss
+        del self.minibatch_loss
         
     @override
     def reg_gradient_step(self, lr: float, reg: float, frac: float):
@@ -179,7 +192,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
 
         # Hint: We created an optimizer that already handles L2
         # regularization for us.        
-        raise NotImplementedError   # you fill this in!
+        pass # No action needed
 
     def learning_speed(self, lr: float, minibatch_size: int) -> float:
         """Estimates how fast we are trying to learn, based on the gradient
