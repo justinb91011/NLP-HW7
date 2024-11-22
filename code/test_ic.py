@@ -16,6 +16,7 @@ from corpus import TaggedCorpus
 from eval import model_cross_entropy, write_tagging
 from hmm import HiddenMarkovModel
 from crf import ConditionalRandomField
+from crf_backprop import ConditionalRandomFieldBackprop
 
 # Set up logging.
 log = logging.getLogger("test_ic")       # For usage, see findsim.py in earlier assignment.
@@ -113,7 +114,7 @@ hmm.printAB()
 # rather than probabilities that sum to 1.
 
 log.info("*** Conditional Random Field (CRF) test\n")
-crf = ConditionalRandomField(icsup.tagset, icsup.vocab)
+crf = ConditionalRandomFieldBackprop(icsup.tagset, icsup.vocab)
 log.info("*** Current A, B matrices (potentials from small random parameters)")
 crf.printAB()
 

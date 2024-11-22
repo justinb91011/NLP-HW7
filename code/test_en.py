@@ -17,6 +17,7 @@ from corpus import TaggedCorpus
 from eval import eval_tagging, model_cross_entropy, viterbi_error_rate
 from hmm import HiddenMarkovModel
 from crf import ConditionalRandomField
+from crf_backprop import ConditionalRandomFieldBackprop
 
 # Set up logging.
 logging.root.setLevel(level=logging.INFO)
@@ -125,8 +126,8 @@ look_at_your_data(hmm, endev, 10)
 # p(tags, words) / n, but that doesn't mean the CRF is worse at tagging.  The
 # CRF is just predicting less information.
 
-log.info("*** Conditional Random Field (CRF)\n")
-crf = ConditionalRandomField(entrain.tagset, entrain.vocab)  # randomly initialized parameters  
+log.info("*** Conditional Random Field BackProp(CRFB)\n")
+crf = ConditionalRandomFieldBackprop(entrain.tagset, entrain.vocab)  # randomly initialized parameters  
 crf.train(corpus=ensup, loss=loss_dev, reg=1.0, lr=0.05, minibatch_size=10,
           save_path="ensup_crf.pkl")
 

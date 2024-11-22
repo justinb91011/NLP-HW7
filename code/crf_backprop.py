@@ -92,9 +92,9 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # and you don't need to initialize them to -inf or anything else.)
         NEG_LAR = -999
         with torch.no_grad():
-            self.WA[:, self.bos_t] = NEG_LARGE
-            self.WB[self.bos_t, :] = NEG_LARGE
-            self.WB[self.eos_t, :] = NEG_LARGE
+            self.WA[:, self.bos_t] = NEG_LAR
+            self.WB[self.bos_t, :] = NEG_LAR
+            self.WB[self.eos_t, :] = NEG_LAR
        
         self.updateAB()  # update A and B potential matrices from new params
 
