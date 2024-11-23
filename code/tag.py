@@ -13,7 +13,8 @@ from corpus import TaggedCorpus
 from lexicon import build_lexicon                  
 from eval import model_cross_entropy, viterbi_error_rate, write_tagging, log as eval_log
 from hmm import HiddenMarkovModel
-from crf import ConditionalRandomField
+# from crf import ConditionalRandomField
+from crf_backprop import ConditionalRandomFieldBackprop as ConditionalRandomField
 from crf_neural import ConditionalRandomFieldNeural
 
 log = logging.getLogger(Path(__file__).stem)  # For usage, see findsim.py in earlier assignment.

@@ -292,6 +292,17 @@ class HiddenMarkovModel:
             raise ValueError(f"Backward log-probability {log_Z_backward} does not match forward log-probability {log_Z_forward}!")
 
     @typechecked
+    def A_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
+        """Return the transition matrix A at the given position."""
+        return self.A
+
+    @typechecked
+    def B_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
+        """Return the emission matrix B at the given position."""
+        return self.B
+
+
+    @typechecked
     def forward_pass(self, isent: IntegerizedSentence) -> TorchScalar:
         """Run the forward algorithm from the handout on a tagged, untagged, 
         or partially tagged sentence.  Return log Z (the log of the forward
@@ -305,10 +316,6 @@ class HiddenMarkovModel:
         n = len(isent)  # Total positions including BOS and EOS
         k = self.k
 
-        # Precompute log probabilities to prevent repeated computation
-        log_pA = self.log_A
-        log_pB = self.log_B
-
         # Initialize alpha tensor (n x k)
         log_alpha = torch.full((n, k), float('-inf'))
         log_alpha[0, self.bos_t] = 0.0  # Start with BOS tag
@@ -321,38 +328,41 @@ class HiddenMarkovModel:
                 tau_mask[j] = False
                 tau_mask[j, t_j] = True
 
-        # Compute log emission probabilities for each position (n x k)
-        log_pB_wj = torch.full((n, k), float('-inf'))
-        for j in range(n):
+        # Forward pass
+        for j in range(1, n):
+            # Get transition and emission matrices at position j
+            A = self.A_at(j, isent)
+            log_pA = torch.log(A + 1e-10)
+            B = self.B_at(j, isent)
+            log_pB = torch.log(B + 1e-10)
+
             w_j = isent[j][0]
+            # Compute emission probabilities for position j
             if w_j < self.V:
-                log_pB_wj[j] = log_pB[:, w_j]
+                log_pB_wj = log_pB[:, w_j]
             else:
                 # Handle special words (BOS_WORD and EOS_WORD)
+                log_pB_wj = torch.full((k,), float('-inf'))
                 if w_j == self.vocab.index(BOS_WORD):
-                    log_pB_wj[j, self.bos_t] = 0.0
+                    log_pB_wj[self.bos_t] = 0.0
                 elif w_j == self.vocab.index(EOS_WORD):
-                    log_pB_wj[j, self.eos_t] = 0.0
+                    log_pB_wj[self.eos_t] = 0.0
 
-        # Apply tau mask to emission probabilities
-        log_pB_wj[~tau_mask] = float('-inf')
+            # Apply tau mask to emission probabilities at position j
+            log_pB_wj[~tau_mask[j]] = float('-inf')
 
-        # Forward 
-        for j in range(1, n):
             # Compute scores
-            prev_alpha = log_alpha[j - 1].unsqueeze(1)  
-            scores = prev_alpha + log_pA  
-            scores += log_pB_wj[j].unsqueeze(0)  
+            prev_alpha = log_alpha[j - 1].unsqueeze(1)
+            scores = prev_alpha + log_pA  # shape (k_prev, k_curr)
+            scores += log_pB_wj.unsqueeze(0)  # add emission probabilities
 
             # Create mask for valid transitions
-            mask = tau_mask[j - 1].unsqueeze(1) & tau_mask[j].unsqueeze(0)  
-
+            mask = tau_mask[j - 1].unsqueeze(1) & tau_mask[j].unsqueeze(0)
             # Apply mask to scores
             scores[~mask] = float('-inf')
 
             # Compute log-alpha for current position
             log_alpha[j] = torch.logsumexp(scores, dim=0)
-
             # Apply mask to log_alpha[j]
             log_alpha[j][~tau_mask[j]] = float('-inf')
 
@@ -378,10 +388,6 @@ class HiddenMarkovModel:
         n = len(isent)  # Total positions including BOS and EOS
         k = self.k
 
-        # Precompute log probabilities
-        log_pA = self.log_A
-        log_pB = self.log_B
-
         # Initialize beta tensor (n x k)
         log_beta = torch.full((n, k), float('-inf'))
         log_beta[-1, self.eos_t] = 0.0  # Start with EOS tag
@@ -394,57 +400,55 @@ class HiddenMarkovModel:
                 tau_mask[j] = False
                 tau_mask[j, t_j] = True
 
-        # Compute log emission probabilities for each position (n x k)
-        log_pB_wj = torch.full((n, k), float('-inf'))
-        for j in range(n):
-            w_j = isent[j][0]
-            if w_j < self.V:
-                log_pB_wj[j] = log_pB[:, w_j]
-            else:
-                # Handle special words
-                if w_j == self.vocab.index(BOS_WORD):
-                    log_pB_wj[j, self.bos_t] = 0.0
-                elif w_j == self.vocab.index(EOS_WORD):
-                    log_pB_wj[j, self.eos_t] = 0.0
-
-        # Apply tau mask to emission probabilities
-        log_pB_wj[~tau_mask] = float('-inf')
-
         # Backward recursion
         for j in range(n - 2, -1, -1):
+            # Get transition and emission matrices at position j+1
+            A = self.A_at(j + 1, isent)
+            log_pA = torch.log(A + 1e-10)
+            B = self.B_at(j + 1, isent)
+            log_pB = torch.log(B + 1e-10)
+
+            w_jp1 = isent[j + 1][0]
+            # Compute emission probabilities for position j+1
+            if w_jp1 < self.V:
+                log_pB_wj = log_pB[:, w_jp1]
+            else:
+                # Handle special words
+                log_pB_wj = torch.full((k,), float('-inf'))
+                if w_jp1 == self.vocab.index(BOS_WORD):
+                    log_pB_wj[self.bos_t] = 0.0
+                elif w_jp1 == self.vocab.index(EOS_WORD):
+                    log_pB_wj[self.eos_t] = 0.0
+
+            # Apply tau mask to emission probabilities at position j+1
+            log_pB_wj[~tau_mask[j + 1]] = float('-inf')
+
             # Next beta values
-            next_beta = log_beta[j + 1]  
+            next_beta = log_beta[j + 1]
             next_beta[~tau_mask[j + 1]] = float('-inf')
 
             # Compute scores
-            scores = log_pA + log_pB_wj[j + 1].unsqueeze(0) + next_beta.unsqueeze(0)  
-
+            scores = log_pA + log_pB_wj.unsqueeze(0) + next_beta.unsqueeze(0)  # shape (k_prev, k_curr)
             # Create mask for valid transitions
-            mask = tau_mask[j].unsqueeze(1) & tau_mask[j + 1].unsqueeze(0) 
-
+            mask = tau_mask[j].unsqueeze(1) & tau_mask[j + 1].unsqueeze(0)
             # Apply mask to scores
             scores[~mask] = float('-inf')
 
             # Compute log-beta for current position
             log_beta[j] = torch.logsumexp(scores, dim=1)
-
             # Apply mask to log_beta[j]
             log_beta[j][~tau_mask[j]] = float('-inf')
 
             # Compute posterior probabilities for transitions
-            alpha_j = self.log_alpha[j].unsqueeze(1)  
-            beta_jp1 = log_beta[j + 1].unsqueeze(0)   
-            xi_scores = alpha_j + log_pA + log_pB_wj[j + 1].unsqueeze(0) + beta_jp1 - self.log_Z
-
+            alpha_j = self.log_alpha[j].unsqueeze(1)
+            beta_jp1 = log_beta[j + 1].unsqueeze(0)
+            xi_scores = alpha_j + log_pA + log_pB_wj.unsqueeze(0) + beta_jp1 - self.log_Z
             # Apply the same mask to xi_scores
             xi_scores[~mask] = float('-inf')
-
             # Convert scores to probabilities
-            xi_probs = torch.exp(xi_scores)  
-
+            xi_probs = torch.exp(xi_scores)
             # Accumulate expected counts
             self.A_counts += xi_probs * mult
-            w_jp1 = isent[j + 1][0]
             if w_jp1 < self.V:
                 self.B_counts[:, w_jp1] += xi_probs.sum(dim=0) * mult
 
@@ -456,43 +460,50 @@ class HiddenMarkovModel:
         current model."""
 
         isent = self._integerize_sentence(sentence, corpus)
-        n = len(isent) - 1
+        n = len(isent)
         k = self.k
 
         # Initialize alpha_hat (max probabilities) and backpointers
         alpha = [torch.full((k,), float('-inf')) for _ in isent]
         backpointers = [torch.zeros(k, dtype=torch.long) for _ in isent]
 
-        # Log probabilities to prevent underflow
-        log_A = torch.log(self.A + 1e-10)
-        log_B = torch.log(self.B + 1e-10)
-
-         # Initialization at position 0 (BOS)
+        # Initialization at position 0 (BOS)
         alpha[0][self.bos_t] = 0.0
+
         # Viterbi algorithm
-        for j in range(1, len(isent)):
+        for j in range(1, n):
             w_j = isent[j][0]  # Word index at position j
+            # Get transition and emission matrices at position j
+            A = self.A_at(j, isent)
+            log_pA = torch.log(A + 1e-10)
+            B = self.B_at(j, isent)
+            log_pB = torch.log(B + 1e-10)
+
             # Compute emission probabilities
             if w_j < self.V:
-                emit_prob = log_B[:, w_j]
+                emit_prob = log_pB[:, w_j]
             else:
                 # For BOS_WORD and EOS_WORD, emission probability is 1 (log(1) = 0)
-                emit_prob = torch.zeros(k)
+                emit_prob = torch.full((k,), float('-inf'))
+                if w_j == self.vocab.index(BOS_WORD):
+                    emit_prob[self.bos_t] = 0.0
+                elif w_j == self.vocab.index(EOS_WORD):
+                    emit_prob[self.eos_t] = 0.0
+
             # Compute the scores matrix by adding alpha[j - 1] to each column of log_A
-            # This uses broadcasting
-            scores = alpha[j - 1].unsqueeze(1) + log_A
+            scores = alpha[j - 1].unsqueeze(1) + log_pA
             # For each t_j, find the max score over t_prev and the corresponding backpointer
             alpha_j, backpointer_j = torch.max(scores, dim=0)
-
             # Add emission probabilities
             alpha[j] = alpha_j + emit_prob
             # Save backpointers
             backpointers[j] = backpointer_j
+
         # Backtracking
-        tags = [0] * len(isent)
+        tags = [0] * n
         tags[-1] = self.eos_t  # Start from EOS_TAG
 
-        for j in range(len(isent) - 1, 0, -1):
+        for j in range(n - 1, 0, -1):
             tags[j - 1] = backpointers[j][tags[j]]
 
         # Construct the tagged sentence
