@@ -69,9 +69,13 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
 
         # You need to override this function to compute your non-stationary features.
 
-        raise NotImplementedError   # you fill this in!
+        phi_A = self.WA
 
-        return self.A + non_stationary_features_A   # example
+        # Add position-based features
+        pos_feat = self.position_embedding(torch.tensor(position)).view(self.k, self.k)
+        phi_A = phi_A + pos_feat
+
+        return phi_A
         
         
     @override
@@ -79,6 +83,13 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
     def B_at(self, position, sentence) -> Tensor:
         # [docstring will be inherited from parent method]
 
-        raise NotImplementedError   # you fill this in!
+        w_j = sentence[position][0]  # Word index at position j
 
-        return self.B + non_stationary_features_B    # example
+        # Base emission potentials
+        phi_B = self.WB
+
+        # Add word-based features
+        word_feat = self.word_embedding(torch.tensor(w_j))
+        phi_B = phi_B + word_feat.unsqueeze(1)
+
+        return phi_B
