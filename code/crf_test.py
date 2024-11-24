@@ -45,11 +45,13 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
 
         # an __init__() call to the nn.Module class must be made before assignment on the child.
         nn.Module.__init__(self)  
-        super().__init__(tagset, vocab, unigram)
 
         self.E = lexicon          # rows are word embeddings
         self.e = lexicon.size(1)  # dimensionality of word embeddings
         self.rnn_dim = rnn_dim
+        self.max_position = 100
+
+        super().__init__(tagset, vocab, unigram)
 
     @override
     def init_params(self) -> None:
@@ -59,8 +61,15 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
 
     @override
     def updateAB(self) -> None:
-        # Nothing to do - self.A and self.B are not used in non-stationary CRFs
-        pass
+        # Your non-stationary A_at() and B_at() might not make any use of the
+        # stationary A and B matrices computed by the parent.  So we override
+        # the parent so that we won't waste time computing self.A, self.B.
+        #
+        # But if you decide that you want A_at() and B() at to refer to self.A
+        # and self.B (for example, multiplying stationary and non-stationary
+        # potentials), then you'll still need to compute them; in that case,
+        # don't override the parent in this way.
+        pass   # do nothing
 
     @override
     @typechecked
@@ -69,13 +78,9 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
 
         # You need to override this function to compute your non-stationary features.
 
-        phi_A = self.WA
+        raise NotImplementedError   # you fill this in!
 
-        # Add position-based features
-        pos_feat = self.position_embedding(torch.tensor(position)).view(self.k, self.k)
-        phi_A = phi_A + pos_feat
-
-        return phi_A
+        return non_stationary_A   # example
         
         
     @override
@@ -83,13 +88,6 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
     def B_at(self, position, sentence) -> Tensor:
         # [docstring will be inherited from parent method]
 
-        w_j = sentence[position][0]  # Word index at position j
+        raise NotImplementedError   # you fill this in!
 
-        # Base emission potentials
-        phi_B = self.WB
-
-        # Add word-based features
-        word_feat = self.word_embedding(torch.tensor(w_j))
-        phi_B = phi_B + word_feat.unsqueeze(1)
-
-        return phi_B
+        return non_stationary_B    # example
