@@ -157,12 +157,9 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
     @override
     @typechecked
     def A_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
-        """Computes non-stationary k x k transition potential matrix using biRNN 
-        contextual features and tag embeddings (one-hot encodings). Output should 
-        be ϕ_A from the "Parameterization" section in the reading handout."""
+        """Computes non-stationary k x k transition probability matrix."""
         k = self.k
         d = self.rnn_dim
-
         device = self.E.device
 
         # Retrieve RNN hidden states
@@ -178,8 +175,6 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         # Expand and reshape for broadcasting
         h_i_minus_2_exp = h_i_minus_2.view(1, 1, -1).expand(k, k, d)  # Shape: (k, k, d)
         h_prime_i_exp = h_prime_i.view(1, 1, -1).expand(k, k, d)      # Shape: (k, k, d)
-
-        # Corrected expansions for tag embeddings
         s_embeddings_exp = tag_embeddings.unsqueeze(0).expand(k, k, k)  # Shape: (k, k, k)
         t_embeddings_exp = tag_embeddings.unsqueeze(0).expand(k, k, k)  # Shape: (k, k, k)
 
@@ -198,80 +193,106 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
 
         # Compute potentials
         potentials_flat = f_A @ self.theta_A  # Shape: (k^2,)
-
-        # Reshape to (k, k)
         potentials = potentials_flat.view(k, k)  # Shape: (k, k)
 
-        return potentials
+        # Compute transition probabilities using softmax over next tags
+        A = torch.softmax(potentials, dim=1)  # Shape: (k, k)
+
+        return A
 
 
     @override
     @typechecked
     def B_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
-        """Computes non-stationary k x V emission potential matrix using biRNN 
-        contextual features, tag embeddings (one-hot encodings), and word embeddings. 
-        Output should be ϕ_B from the "Parameterization" section in the reading handout."""
+        """Computes non-stationary k x V emission probability matrix."""
         k = self.k
         d = self.rnn_dim
         e = self.e
-
+        V = self.V
         device = self.E.device
 
-        # Retrieve RNN hidden states and word embedding
+        # Retrieve RNN hidden states
         if position >= 1:
             h_i_minus_1 = self.h[position - 1]  # h_{i-1}
         else:
             h_i_minus_1 = torch.zeros(d, device=device)  # h_{-1}
         h_prime_i = self.h_prime[position]  # h'_i
-        w_i = sentence[position][0]  # Word index at position i
-
-        # Check if w_i is BOS_WORD or EOS_WORD
-        if w_i == self.vocab.index(BOS_WORD):
-            # Handle BOS_WORD
-            phi_B = torch.full((k, self.V), float('-inf'), device=device)
-            phi_B[self.bos_t, :] = float('-inf')
-            phi_B[self.bos_t, :] = 0.0  # BOS_TAG emits BOS_WORD with potential 0
-            return phi_B
-        elif w_i == self.vocab.index(EOS_WORD):
-            # Handle EOS_WORD
-            phi_B = torch.full((k, self.V), float('-inf'), device=device)
-            phi_B[self.eos_t, :] = float('-inf')
-            phi_B[self.eos_t, :] = 0.0  # EOS_TAG emits EOS_WORD with potential 0
-            return phi_B
-        elif w_i >= self.V:
-            # Unknown word index
-            raise ValueError(f"Unknown word index {w_i}")
-
-        w_emb = self.E[w_i]          # Shape: (e,)
 
         # Prepare tag embeddings
         tag_embeddings = self.tag_embeddings.to(device)  # Shape: (k, k)
 
         # Expand and reshape for broadcasting
-        h_i_minus_1_exp = h_i_minus_1.view(1, -1).expand(k, d)  # Shape: (k, d)
-        h_prime_i_exp = h_prime_i.view(1, -1).expand(k, d)      # Shape: (k, d)
-        w_emb_exp = w_emb.view(1, -1).expand(k, e)              # Shape: (k, e)
-        t_embeddings_exp = tag_embeddings  # Shape: (k, k)
+        h_i_minus_1_exp = h_i_minus_1.unsqueeze(0).unsqueeze(0).expand(k, V, d)
+        h_prime_i_exp = h_prime_i.unsqueeze(0).unsqueeze(0).expand(k, V, d)
+        t_embeddings_exp = tag_embeddings.unsqueeze(1).expand(k, V, k)
+        E_w = self.E[:V].to(device)  # Shape: (V, e)
+        w_emb_exp = E_w.unsqueeze(0).expand(k, V, e)
 
         # Concatenate inputs
-        ones = torch.ones(k, 1, device=device)  # Shape: (k, 1)
+        ones = torch.ones(k, V, 1, device=device)
         input_tensor = torch.cat(
             [ones, h_i_minus_1_exp, t_embeddings_exp, w_emb_exp, h_prime_i_exp],
-            dim=1
-        )  # Shape: (k, input_size_B)
+            dim=2
+        )  # Shape: (k, V, input_size_B)
+
+        # Flatten for batch processing
+        input_tensor_flat = input_tensor.view(k * V, -1)
 
         # Compute f^B
-        f_B = torch.sigmoid(input_tensor @ self.U_B.T)  # Shape: (k, feature_size)
+        f_B = torch.tanh(input_tensor_flat @ self.U_B.T)  # Shape: (k*V, feature_size)
 
         # Compute potentials
-        potentials = f_B @ self.theta_B  # Shape: (k,)
+        potentials_flat = f_B @ self.theta_B  # Shape: (k*V,)
 
-        # Initialize phi_B
-        phi_B = torch.full((k, self.V), float('-inf'), device=device)  # Shape: (k, V)
+        # Reshape to (k, V)
+        potentials = potentials_flat.view(k, V)
 
-        # Assign potentials to the known word index
-        phi_B[:, w_i] = potentials
+        # Compute emission probabilities using softmax over words
+        B = torch.softmax(potentials, dim=1)  # Shape: (k, V)
 
-        return phi_B
+        return B
+
+    # @override
+    # def setup_sentence(self, isent: IntegerizedSentence) -> None:
+    #     """Pre-compute the biRNN prefix and suffix contextual features (h and h'
+    #     vectors) at all positions, as defined in the "Parameterization" section
+    #     of the reading handout.  They can then be accessed by A_at() and B_at().
+    #     """
+    #     n = len(isent)
+    #     d = self.rnn_dim
+    #     e = self.e
+    #     device = self.E.device
+
+    #     # Initialize h and h_prime lists
+    #     self.h = [None] * n  # h[0] to h[n-1]
+    #     self.h_prime = [None] * (n + 1)  # h_prime[0] to h_prime[n]
+
+    #     # Initialize h_{-1}
+    #     self.h[0] = torch.zeros(d, device=device)  # h_{-1}
+
+    #     # Forward RNN
+    #     for j in range(1, n):
+    #         w_j = isent[j][0]
+    #         w_emb = self.E[w_j].to(device)  # Ensure tensor is on the correct device
+    #         h_prev = self.h[j - 1]
+    #         input_vec = torch.cat([torch.ones(1, device=device), h_prev, w_emb])  # [1; h_{j-1}; w_j]
+    #         h_j = torch.sigmoid(self.M @ input_vec)
+    #         self.h[j] = h_j
+
+    #     # Initialize h'_{n}
+    #     self.h_prime[n] = torch.zeros(d, device=device)  # h'_{n}
+
+    #     # Backward RNN
+    #     for j in range(n - 1, -1, -1):
+    #         if j + 1 < n:
+    #             w_j_plus_1 = isent[j + 1][0]
+    #         else:
+    #             w_j_plus_1 = self.vocab.index(EOS_WORD)
+    #         w_emb = self.E[w_j_plus_1].to(device)
+    #         h_prime_next = self.h_prime[j + 1]
+    #         input_vec = torch.cat([torch.ones(1, device=device), w_emb, h_prime_next])  # [1; w_{j+1}; h'_{j+1}]
+    #         h_prime_j = torch.sigmoid(self.M_prime @ input_vec)
+    #         self.h_prime[j] = h_prime_j
+
 
 
