@@ -17,7 +17,7 @@ import torch
 from torch import Tensor, cuda
 from jaxtyping import Float
 
-from corpus import IntegerizedSentence, Sentence, Tag, TaggedCorpus, Word
+from corpus import IntegerizedSentence, Sentence, Tag, TaggedCorpus, Word, EOS_WORD, BOS_WORD
 from integerize import Integerizer
 from crf_backprop import ConditionalRandomFieldBackprop, TorchScalar
 
@@ -156,37 +156,42 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
 
     @override
     @typechecked
-    def A_at(self, position, sentence) -> Tensor:
-        
+    def A_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
         """Computes non-stationary k x k transition potential matrix using biRNN 
         contextual features and tag embeddings (one-hot encodings). Output should 
-        be ϕA from the "Parameterization" section in the reading handout."""
-
+        be ϕ_A from the "Parameterization" section in the reading handout."""
         k = self.k
         d = self.rnn_dim
 
+        device = self.E.device
+
         # Retrieve RNN hidden states
-        h_i_minus_2 = self.h[position - 2] if position - 2 >= 0 else torch.zeros(d)
-        h_prime_i = self.h_prime[position]
+        if position >= 2:
+            h_i_minus_2 = self.h[position - 2]  # h_{i-2}
+        else:
+            h_i_minus_2 = torch.zeros(d, device=device)  # h_{-1}
+        h_prime_i = self.h_prime[position]  # h'_i
 
         # Prepare tag embeddings (one-hot vectors)
-        tag_embeddings = self.tag_embeddings  # Shape: (k, k)
+        tag_embeddings = self.tag_embeddings.to(device)  # Shape: (k, k)
 
         # Expand and reshape for broadcasting
-        h_i_minus_2_exp = h_i_minus_2.view(1, 1, -1).expand(k, k, -1)  # Shape: (k, k, d)
-        h_prime_i_exp = h_prime_i.view(1, 1, -1).expand(k, k, -1)      # Shape: (k, k, d)
-        s_embeddings_exp = tag_embeddings.unsqueeze(1).expand(k, k, k)  # Shape: (k, k, k)
+        h_i_minus_2_exp = h_i_minus_2.view(1, 1, -1).expand(k, k, d)  # Shape: (k, k, d)
+        h_prime_i_exp = h_prime_i.view(1, 1, -1).expand(k, k, d)      # Shape: (k, k, d)
+
+        # Corrected expansions for tag embeddings
+        s_embeddings_exp = tag_embeddings.unsqueeze(0).expand(k, k, k)  # Shape: (k, k, k)
         t_embeddings_exp = tag_embeddings.unsqueeze(0).expand(k, k, k)  # Shape: (k, k, k)
 
         # Concatenate inputs
-        ones = torch.ones(k, k, 1)  # Shape: (k, k, 1)
+        ones = torch.ones(k, k, 1, device=device)  # Shape: (k, k, 1)
         input_tensor = torch.cat(
             [ones, h_i_minus_2_exp, s_embeddings_exp, t_embeddings_exp, h_prime_i_exp],
             dim=2
-        )  # Shape: (k, k, input_size)
+        )  # Shape: (k, k, input_size_A)
 
         # Flatten for batch processing
-        input_tensor_flat = input_tensor.view(k * k, -1)  # Shape: (k^2, input_size)
+        input_tensor_flat = input_tensor.view(k * k, -1)  # Shape: (k^2, input_size_A)
 
         # Compute f^A
         f_A = torch.sigmoid(input_tensor_flat @ self.U_A.T)  # Shape: (k^2, feature_size)
@@ -200,38 +205,60 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         return potentials
 
 
-        
     @override
     @typechecked
-    def B_at(self, position, sentence) -> Tensor:
+    def B_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
         """Computes non-stationary k x V emission potential matrix using biRNN 
         contextual features, tag embeddings (one-hot encodings), and word embeddings. 
-        Output should be ϕB from the "Parameterization" section in the reading handout."""
-
+        Output should be ϕ_B from the "Parameterization" section in the reading handout."""
         k = self.k
         d = self.rnn_dim
         e = self.e
 
+        device = self.E.device
+
         # Retrieve RNN hidden states and word embedding
-        h_i_minus_1 = self.h[position - 1] if position - 1 >= 0 else torch.zeros(d)
-        h_prime_i = self.h_prime[position]
+        if position >= 1:
+            h_i_minus_1 = self.h[position - 1]  # h_{i-1}
+        else:
+            h_i_minus_1 = torch.zeros(d, device=device)  # h_{-1}
+        h_prime_i = self.h_prime[position]  # h'_i
         w_i = sentence[position][0]  # Word index at position i
+
+        # Check if w_i is BOS_WORD or EOS_WORD
+        if w_i == self.vocab.index(BOS_WORD):
+            # Handle BOS_WORD
+            phi_B = torch.full((k, self.V), float('-inf'), device=device)
+            phi_B[self.bos_t, :] = float('-inf')
+            phi_B[self.bos_t, :] = 0.0  # BOS_TAG emits BOS_WORD with potential 0
+            return phi_B
+        elif w_i == self.vocab.index(EOS_WORD):
+            # Handle EOS_WORD
+            phi_B = torch.full((k, self.V), float('-inf'), device=device)
+            phi_B[self.eos_t, :] = float('-inf')
+            phi_B[self.eos_t, :] = 0.0  # EOS_TAG emits EOS_WORD with potential 0
+            return phi_B
+        elif w_i >= self.V:
+            # Unknown word index
+            raise ValueError(f"Unknown word index {w_i}")
+
         w_emb = self.E[w_i]          # Shape: (e,)
 
         # Prepare tag embeddings
-        tag_embeddings = self.tag_embeddings  # Shape: (k, k)
+        tag_embeddings = self.tag_embeddings.to(device)  # Shape: (k, k)
 
         # Expand and reshape for broadcasting
-        h_i_minus_1_exp = h_i_minus_1.view(1, -1).expand(k, -1)  # Shape: (k, d)
-        h_prime_i_exp = h_prime_i.view(1, -1).expand(k, -1)      # Shape: (k, d)
-        w_emb_exp = w_emb.view(1, -1).expand(k, -1)              # Shape: (k, e)
+        h_i_minus_1_exp = h_i_minus_1.view(1, -1).expand(k, d)  # Shape: (k, d)
+        h_prime_i_exp = h_prime_i.view(1, -1).expand(k, d)      # Shape: (k, d)
+        w_emb_exp = w_emb.view(1, -1).expand(k, e)              # Shape: (k, e)
+        t_embeddings_exp = tag_embeddings  # Shape: (k, k)
 
         # Concatenate inputs
-        ones = torch.ones(k, 1)  # Shape: (k, 1)
+        ones = torch.ones(k, 1, device=device)  # Shape: (k, 1)
         input_tensor = torch.cat(
-            [ones, h_i_minus_1_exp, tag_embeddings, w_emb_exp, h_prime_i_exp],
+            [ones, h_i_minus_1_exp, t_embeddings_exp, w_emb_exp, h_prime_i_exp],
             dim=1
-        )  # Shape: (k, input_size)
+        )  # Shape: (k, input_size_B)
 
         # Compute f^B
         f_B = torch.sigmoid(input_tensor @ self.U_B.T)  # Shape: (k, feature_size)
@@ -240,7 +267,7 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         potentials = f_B @ self.theta_B  # Shape: (k,)
 
         # Initialize phi_B
-        phi_B = torch.full((k, self.V), float('-inf'))  # Shape: (k, V)
+        phi_B = torch.full((k, self.V), float('-inf'), device=device)  # Shape: (k, V)
 
         # Assign potentials to the known word index
         phi_B[:, w_i] = potentials
