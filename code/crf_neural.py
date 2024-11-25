@@ -252,47 +252,47 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
 
         return B
 
-    # @override
-    # def setup_sentence(self, isent: IntegerizedSentence) -> None:
-    #     """Pre-compute the biRNN prefix and suffix contextual features (h and h'
-    #     vectors) at all positions, as defined in the "Parameterization" section
-    #     of the reading handout.  They can then be accessed by A_at() and B_at().
-    #     """
-    #     n = len(isent)
-    #     d = self.rnn_dim
-    #     e = self.e
-    #     device = self.E.device
+    @override
+    def setup_sentence(self, isent: IntegerizedSentence) -> None:
+        """Pre-compute the biRNN prefix and suffix contextual features (h and h'
+        vectors) at all positions, as defined in the "Parameterization" section
+        of the reading handout.  They can then be accessed by A_at() and B_at().
+        """
+        n = len(isent)
+        d = self.rnn_dim
+        e = self.e
+        device = self.E.device
 
-    #     # Initialize h and h_prime lists
-    #     self.h = [None] * n  # h[0] to h[n-1]
-    #     self.h_prime = [None] * (n + 1)  # h_prime[0] to h_prime[n]
+        # Initialize h and h_prime lists
+        self.h = [None] * n  # h[0] to h[n-1]
+        self.h_prime = [None] * (n + 1)  # h_prime[0] to h_prime[n]
 
-    #     # Initialize h_{-1}
-    #     self.h[0] = torch.zeros(d, device=device)  # h_{-1}
+        # Initialize h_{-1}
+        self.h[0] = torch.zeros(d, device=device)  # h_{-1}
 
-    #     # Forward RNN
-    #     for j in range(1, n):
-    #         w_j = isent[j][0]
-    #         w_emb = self.E[w_j].to(device)  # Ensure tensor is on the correct device
-    #         h_prev = self.h[j - 1]
-    #         input_vec = torch.cat([torch.ones(1, device=device), h_prev, w_emb])  # [1; h_{j-1}; w_j]
-    #         h_j = torch.sigmoid(self.M @ input_vec)
-    #         self.h[j] = h_j
+        # Forward RNN
+        for j in range(1, n):
+            w_j = isent[j][0]
+            w_emb = self.E[w_j].to(device)  # Ensure tensor is on the correct device
+            h_prev = self.h[j - 1]
+            input_vec = torch.cat([torch.ones(1, device=device), h_prev, w_emb])  # [1; h_{j-1}; w_j]
+            h_j = torch.sigmoid(self.M @ input_vec)
+            self.h[j] = h_j
 
-    #     # Initialize h'_{n}
-    #     self.h_prime[n] = torch.zeros(d, device=device)  # h'_{n}
+        # Initialize h'_{n}
+        self.h_prime[n] = torch.zeros(d, device=device)  # h'_{n}
 
-    #     # Backward RNN
-    #     for j in range(n - 1, -1, -1):
-    #         if j + 1 < n:
-    #             w_j_plus_1 = isent[j + 1][0]
-    #         else:
-    #             w_j_plus_1 = self.vocab.index(EOS_WORD)
-    #         w_emb = self.E[w_j_plus_1].to(device)
-    #         h_prime_next = self.h_prime[j + 1]
-    #         input_vec = torch.cat([torch.ones(1, device=device), w_emb, h_prime_next])  # [1; w_{j+1}; h'_{j+1}]
-    #         h_prime_j = torch.sigmoid(self.M_prime @ input_vec)
-    #         self.h_prime[j] = h_prime_j
+        # Backward RNN
+        for j in range(n - 1, -1, -1):
+            if j + 1 < n:
+                w_j_plus_1 = isent[j + 1][0]
+            else:
+                w_j_plus_1 = self.vocab.index(EOS_WORD)
+            w_emb = self.E[w_j_plus_1].to(device)
+            h_prime_next = self.h_prime[j + 1]
+            input_vec = torch.cat([torch.ones(1, device=device), w_emb, h_prime_next])  # [1; w_{j+1}; h'_{j+1}]
+            h_prime_j = torch.sigmoid(self.M_prime @ input_vec)
+            self.h_prime[j] = h_prime_j
 
 
 
