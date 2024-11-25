@@ -312,7 +312,7 @@ class HiddenMarkovModel:
         As a side effect, remember the alpha probabilities and log_Z
         (store some representation of them into attributes of self)
         so that they can subsequently be used by the backward pass."""
-    
+        self.setup_sentence(isent)
         n = len(isent)  # Total positions including BOS and EOS
         k = self.k
 
@@ -385,6 +385,7 @@ class HiddenMarkovModel:
         values and log Z, which were stored for us (in self) by the forward
         pass."""
     
+        self.setup_sentence(isent)
         n = len(isent)  # Total positions including BOS and EOS
         k = self.k
 
@@ -460,6 +461,8 @@ class HiddenMarkovModel:
         current model."""
 
         isent = self._integerize_sentence(sentence, corpus)
+
+        self.setup_sentence(isent)
         n = len(isent)
         k = self.k
 
@@ -534,3 +537,8 @@ class HiddenMarkovModel:
 
         logger.info(f"Loaded model from {model_path}")
         return model
+
+    def setup_sentence(self, isent: IntegerizedSentence) -> None:
+        """Precompute any quantities needed for forward/backward/Viterbi algorithms.
+        This method may be overridden in subclasses."""
+        pass  # Default implementation does nothing
