@@ -101,7 +101,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
     def init_optimizer(self, lr: float, weight_decay: float) -> None:      
         """Creates an optimizer for training.
         A subclass may override this method to select a different optimizer."""
-        self.optimizer = torch.optim.SGD(
+        self.optimizer = torch.optim.AdamW(
             params=self.parameters(),  # all nn.Parameter objects that are stored in attributes of self
             lr=lr, weight_decay=weight_decay
         )
