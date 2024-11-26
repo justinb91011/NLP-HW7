@@ -5,7 +5,7 @@ Command-line interface for training and evaluating HMM and CRF taggers.
 import argparse
 import logging
 from pathlib import Path
-import os, os.path
+import os, os.path, datetime
 from typing import Callable, Tuple, Union
 
 import torch, torch.backends.mps
@@ -240,10 +240,13 @@ def parse_args() -> argparse.Namespace:
       
     # default paths for saving the tagging outputs and eval
     if args.model:
+        resultname = os.path.splitext(args.model)[0]
+        resultname += "_" + os.path.splitext(os.path.basename(args.input))[0]
+        print(resultname)
         if not args.output_file:
-            args.output_file = os.path.splitext(args.model)[0] + "_" + os.path.splitext(args.input)[0] + ".output"
+            args.output_file = resultname + ".output"
         if not args.eval_file:
-            args.eval_file = os.path.splitext(args.model)[0] + "_" + os.path.splitext(args.input)[0] + ".eval"
+            args.eval_file = resultname + ".eval"
     if not args.output_file:
         log.warning(f"Warning: won't save tagging output (use --output_file for that)")
     if not args.eval_file:
@@ -382,8 +385,8 @@ def main() -> None:
         else:
             raise NotImplementedError()
         
-        if hasattr(model, "total_training_time", ):
-            eval_log.info(f"Total training time: {model.total_training_time:.0f}s\n---")
+        if hasattr(model, "total_training_time"):
+            eval_log.info(f"Total training time: {datetime.timedelta(seconds=int(model.total_training_time))}\n---")  # type: ignore
     else:
         # Any training-related options are irrelevant, but let's not complain if
         # they were provided: we happen to be training on 0 files this time,
