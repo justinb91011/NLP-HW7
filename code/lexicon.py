@@ -154,7 +154,50 @@ def problex_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     value log(p(w)).  These probabilities are add-one-smoothing
     estimates."""
 
-    raise NotImplementedError   # you fill this in!
+    vocab = corpus.vocab
+    tagset = corpus.tagset
+    V = len(vocab)
+    K = len(tagset)
+
+    # Initialize counts
+    word_counts = [0] * V  # counts[w]
+    word_tag_counts = [ [0] * K for _ in range(V) ]  # counts_by_tag[w][t]
+    N = 0  # Total number of word tokens (including BOS and EOS)
+
+    # Count words and word-tag pairs in the corpus
+    for sentence in corpus:
+        for word, tag in sentence:
+            w_idx = vocab.index(word)
+            t_idx = tagset.index(tag)
+            word_counts[w_idx] += 1
+            word_tag_counts[w_idx][t_idx] += 1
+            N += 1
+
+    # Convert counts to tensors
+    word_counts_tensor = torch.tensor(word_counts, dtype=torch.float)
+    word_tag_counts_tensor = torch.tensor(word_tag_counts, dtype=torch.float)
+
+    # Add-one smoothing parameters
+    word_counts_smoothed = word_counts_tensor + 1  # counts[w] + 1
+    N_smoothed = N + V  # N + V
+    tag_counts = word_tag_counts_tensor + 1  # counts[w, t] + 1
+    K_smoothed = word_counts_tensor.unsqueeze(1) + K  # counts[w] + K, shape (V, 1)
+
+    # Compute p(w) with add-one smoothing
+    p_w = word_counts_smoothed / N_smoothed  # Shape: (V,)
+
+    # Compute p(t|w) with add-one smoothing
+    p_t_given_w = tag_counts / K_smoothed  # Shape: (V, K)
+
+    # Compute log probabilities
+    log_p_t_given_w = torch.log(p_t_given_w)  # Shape: (V, K)
+    log_p_w = torch.log(p_w).unsqueeze(1)     # Shape: (V, 1)
+
+    # Concatenate log_p_t_given_w and log_p_w to form the feature matrix
+    feature_matrix = torch.cat([log_p_t_given_w, log_p_w], dim=1)  # Shape: (V, K + 1)
+
+    return feature_matrix
+
 
 def affixes_lexicon(corpus: TaggedCorpus,
                     newvocab: Optional[Integerizer[Word]] = None) -> torch.Tensor:
