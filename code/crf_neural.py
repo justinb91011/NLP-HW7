@@ -53,6 +53,11 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         self.k = len(tagset)
         self.tag_embeddings = torch.eye(self.k)
 
+        # Move tag embeddings to device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.tag_embeddings = self.tag_embeddings.to(self.device)
+        self.E = self.E.to(self.device)
+
         
         nn.Module.__init__(self)  
         super().__init__(tagset, vocab, unigram)
@@ -72,10 +77,24 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         d = self.rnn_dim
         e = self.e
         k = self.k
+        device = self.device
         
         # Initialize RNN parameters
         self.M = nn.Parameter(torch.empty(d, 1 + d + e))
         self.M_prime = nn.Parameter(torch.empty(d, 1 +  e + d))
+
+        # Initialize RNNs
+        self.rnn_forward = nn.RNN(
+            input_size=self.e, hidden_size=self.rnn_dim, batch_first=True
+        )
+        self.rnn_backward = nn.RNN(
+            input_size=self.e, hidden_size=self.rnn_dim, batch_first=True
+        )
+
+        self.rnn_forward.to(self.device)
+        self.rnn_backward.to(self.device)
+
+
 
         input_size_A = 1 + d + k + k + d
         input_size_B = 1 + d + k + e + d
@@ -125,29 +144,27 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         n = len(isent)
         d = self.rnn_dim
         e = self.e
+        device = self.device
 
-        # Initialize h and h_prime lists
-        self.h = [torch.zeros(d)]  # h_{-1}
-        self.h_prime = [torch.zeros(d)] * (n + 1)  # h'_{n+1}
+        # Prepare embeddings
+        word_indices = [w for w, _ in isent]
+        embeddings = self.E[word_indices].unsqueeze(0).to(device)  # Shape: (1, n, e)
 
-        # Precompute h_j for j from 0 to n-1
-        for j in range(n):
-            w_j = isent[j][0]
-            w_emb = self.E[w_j]  # Word embedding
-            prev_h = self.h[-1]
-            input_vec = torch.cat([torch.tensor([1.0]), prev_h, w_emb])  # [1; h_{j-1}; w_j]
-            h_j = torch.sigmoid(self.M @ input_vec)
-            self.h.append(h_j)
+        # Forward RNN
+        h_forward, _ = self.rnn_forward(embeddings)  # h_forward: (1, n, d)
+        h_forward = h_forward.squeeze(0)  # Shape: (n, d)
+        # Prepend h_{-1} = zeros(d)
+        h_minus1 = torch.zeros(self.rnn_dim, device=device).unsqueeze(0)  # Shape: (1, d)
+        self.h = torch.cat([h_minus1, h_forward], dim=0)  # Shape: (n+1, d)
 
-        # Precompute h'_j for j from n to 1
-        self.h_prime[n] = torch.zeros(d)  # h'_{n+1}
-        for j in range(n - 1, -1, -1):
-            w_j_plus_1 = isent[j + 1][0] if j + 1 < n else self.vocab.index(EOS_WORD)
-            w_emb = self.E[w_j_plus_1]
-            next_h_prime = self.h_prime[j + 1]
-            input_vec = torch.cat([torch.tensor([1.0]), w_emb, next_h_prime])  # [1; w_{j+1}; h'_{j+1}]
-            h_prime_j = torch.sigmoid(self.M_prime @ input_vec)
-            self.h_prime[j] = h_prime_j
+        # Backward RNN
+        embeddings_rev = torch.flip(embeddings, [1])  # Reverse the sequence
+        h_backward_rev, _ = self.rnn_backward(embeddings_rev)
+        h_backward = torch.flip(h_backward_rev, [1])  # Restore original order
+        h_backward = h_backward.squeeze(0)  # Shape: (n, d)
+        # Append h'_{n+1} = zeros(d)
+        h_prime_nplus1 = torch.zeros(self.rnn_dim, device=device).unsqueeze(0)  # Shape: (1, d)
+        self.h_prime = torch.cat([h_backward, h_prime_nplus1], dim=0)  # Shape: (n+1, d)
 
     @override
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
@@ -251,48 +268,3 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         B = torch.softmax(potentials, dim=1)  # Shape: (k, V)
 
         return B
-
-    @override
-    def setup_sentence(self, isent: IntegerizedSentence) -> None:
-        """Pre-compute the biRNN prefix and suffix contextual features (h and h'
-        vectors) at all positions, as defined in the "Parameterization" section
-        of the reading handout.  They can then be accessed by A_at() and B_at().
-        """
-        n = len(isent)
-        d = self.rnn_dim
-        e = self.e
-        device = self.E.device
-
-        # Initialize h and h_prime lists
-        self.h = [None] * n  # h[0] to h[n-1]
-        self.h_prime = [None] * (n + 1)  # h_prime[0] to h_prime[n]
-
-        # Initialize h_{-1}
-        self.h[0] = torch.zeros(d, device=device)  # h_{-1}
-
-        # Forward RNN
-        for j in range(1, n):
-            w_j = isent[j][0]
-            w_emb = self.E[w_j].to(device)  # Ensure tensor is on the correct device
-            h_prev = self.h[j - 1]
-            input_vec = torch.cat([torch.ones(1, device=device), h_prev, w_emb])  # [1; h_{j-1}; w_j]
-            h_j = torch.sigmoid(self.M @ input_vec)
-            self.h[j] = h_j
-
-        # Initialize h'_{n}
-        self.h_prime[n] = torch.zeros(d, device=device)  # h'_{n}
-
-        # Backward RNN
-        for j in range(n - 1, -1, -1):
-            if j + 1 < n:
-                w_j_plus_1 = isent[j + 1][0]
-            else:
-                w_j_plus_1 = self.vocab.index(EOS_WORD)
-            w_emb = self.E[w_j_plus_1].to(device)
-            h_prime_next = self.h_prime[j + 1]
-            input_vec = torch.cat([torch.ones(1, device=device), w_emb, h_prime_next])  # [1; w_{j+1}; h'_{j+1}]
-            h_prime_j = torch.sigmoid(self.M_prime @ input_vec)
-            self.h_prime[j] = h_prime_j
-
-
-
