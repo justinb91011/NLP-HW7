@@ -212,48 +212,55 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         k = self.k
         d = self.rnn_dim
         e = self.e
-        V = self.V
         device = self.device
 
+        # Retrieve the current word index
+        word_index = sentence[position][0]
+
         # Retrieve RNN hidden states
-        if position >= 1:
-            h_i_minus_1 = self.h[position - 1]  # h_{i-1}
-        else:
-            h_i_minus_1 = torch.zeros(d, device=device)  # h_{-1}
-        h_prime_i = self.h_prime[position]  # h'_i
+        h_i_minus_1 = self.h[position - 1] if position >= 1 else torch.zeros(d, device=device)
+        h_prime_i = self.h_prime[position]
 
         # Prepare tag embeddings
-        tag_embeddings = self.tag_embeddings.to(device)  # Shape: (k, k)
+        t_embeddings = self.tag_embeddings.to(device)  # Shape: (k, k)
 
-        # Expand and reshape for broadcasting
-        h_i_minus_1_exp = h_i_minus_1.unsqueeze(0).unsqueeze(0).expand(k, V, d)
-        h_prime_i_exp = h_prime_i.unsqueeze(0).unsqueeze(0).expand(k, V, d)
-        t_embeddings_exp = tag_embeddings.unsqueeze(1).expand(k, V, k)
-        E_w = self.E[:V].to(device)  # Shape: (V, e)
-        w_emb_exp = E_w.unsqueeze(0).expand(k, V, e)
+        # Initialize emission potential matrix
+        B = torch.zeros((k, self.V), device=device)
 
-        # Concatenate inputs
-        ones = torch.ones(k, V, 1, device=device)
-        input_tensor = torch.cat(
-            [ones, h_i_minus_1_exp, t_embeddings_exp, w_emb_exp, h_prime_i_exp],
-            dim=2
-        )  # Shape: (k, V, input_size_B)
+        # Check if word_index corresponds to a special word
+        if word_index < self.V:
+            # Word embedding for the current word
+            w_emb = self.E[word_index].to(device)  # Shape: (e,)
 
-        # Flatten for batch processing
-        input_tensor_flat = input_tensor.view(k * V, -1)
+            # Repeat vectors to match dimensions
+            ones = torch.ones(k, 1, device=device)
+            h_i_minus_1_exp = h_i_minus_1.unsqueeze(0).repeat(k, 1)
+            h_prime_i_exp = h_prime_i.unsqueeze(0).repeat(k, 1)
+            w_emb_exp = w_emb.unsqueeze(0).repeat(k, 1)
 
-        # Compute f^B
-        f_B = torch.tanh(input_tensor_flat @ self.U_B.T)  # Shape: (k*V, feature_size)
+            # Concatenate inputs
+            input_tensor = torch.cat(
+                [ones, h_i_minus_1_exp, t_embeddings, w_emb_exp, h_prime_i_exp],
+                dim=1
+            )  # Shape: (k, input_size_B)
 
-        # Compute potentials
-        potentials_flat = f_B @ self.theta_B  # Shape: (k*V,)
+            # Compute f^B
+            f_B = torch.tanh(input_tensor @ self.U_B.T)  # Shape: (k, feature_size)
 
-        # Reshape to (k, V)
-        potentials = potentials_flat.view(k, V)
+            # Compute potentials
+            potentials = f_B @ self.theta_B  # Shape: (k,)
 
-        # Compute emission probabilities using softmax over words
-        B = torch.softmax(potentials, dim=1)  # Shape: (k, V)
-
+            # Compute emission probabilities
+            B[torch.arange(k), word_index] = torch.softmax(potentials, dim=0)
+        else:
+            # Handle special words (BOS_WORD and EOS_WORD)
+            if word_index == self.vocab.index(BOS_WORD):
+                B[self.bos_t, :] = 1.0  # BOS_TAG can only emit BOS_WORD
+            elif word_index == self.vocab.index(EOS_WORD):
+                B[self.eos_t, :] = 1.0  # EOS_TAG can only emit EOS_WORD
+            else:
+                # For any other special words, set emission probabilities to zero
+                pass
         return B
 
     
