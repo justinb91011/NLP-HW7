@@ -519,24 +519,66 @@ class HiddenMarkovModel:
 
         return tagged_sentence
 
-    def save(self, model_path: Path) -> None:
-        logger.info(f"Saving model to {model_path}")
-        torch.save(self, model_path, pickle_protocol=pickle.HIGHEST_PROTOCOL)
-        logger.info(f"Saved model to {model_path}")
+    def save(self, path: Path|str, checkpoint=None, checkpoint_interval: int = 300) -> None:
+        """Save this model to the file named by path.  Or if checkpoint is not None, insert its 
+        string representation into the filename and save to a temporary checkpoint file (but only 
+        do this save if it's been at least checkpoint_interval seconds since the last save).  If 
+        the save is successful, then remove the previous checkpoint file, if any."""
+
+        if isinstance(path, str): path = Path(path)   # convert str argument to Path if needed
+
+        now = time.time()
+        old_save_time =           getattr(self, "_save_time", None)
+        old_checkpoint_path =     getattr(self, "_checkpoint_path", None)
+        old_total_training_time = getattr(self, "total_training_time", 0)
+
+        if checkpoint is None:
+            self._checkpoint_path = None   # this is a real save, not a checkpoint
+        else:    
+            if old_save_time is not None and now < old_save_time + checkpoint_interval: 
+                return   # we already saved too recently to save another temp version
+            path = path.with_name(f"{path.stem}-{checkpoint}{path.suffix}")  # use temp filename
+            self._checkpoint_path = path
+
+        # update the elapsed training time since we started training or last saved (if that happened)
+        if old_save_time is not None:
+            self.total_training_time = old_total_training_time + (now - old_save_time)
+        del self._save_time
+        
+        # Save the model with the fields set as above, so that we'll 
+        # continue from it correctly when we reload it.
+        try:
+            torch.save(self, path, pickle_protocol=pickle.HIGHEST_PROTOCOL)
+            logger.info(f"Saved model to {path}")
+        except Exception as e:   
+            # something went wrong with the save; so restore our old fields,
+            # so that caller can potentially catch this exception and try again
+            self._save_time          = old_save_time
+            self._checkpoint_path    = old_checkpoint_path
+            self.total_training_time = old_total_training_time
+            raise e
+        
+        # Since save was successful, remember it and remove old temp version (if any)
+        self._save_time = now
+        if old_checkpoint_path: 
+            try: os.remove(old_checkpoint_path)
+            except FileNotFoundError: pass  # don't complain if the user already removed it manually
 
     @classmethod
-    def load(cls, model_path: Path, device: str = 'cpu') -> HiddenMarkovModel:
-        logger.info(f"Loading model from {model_path}")
-        model = torch.load(model_path, map_location=device)\
+    def load(cls, path: Path|str, device: str = 'cpu') -> HiddenMarkovModel:
+        if isinstance(path, str): path = Path(path)   # convert str argument to Path if needed
             
         # torch.load is similar to pickle.load but handles tensors too
         # map_location allows loading tensors on different device than saved
-        if model.__class__ != cls:
-            raise ValueError(f"Type Error: expected object of type {cls.__name__} but got {model.__class__.__name__} " \
-                             f"from saved file {model_path}.")
+        model = torch.load(path, map_location=device)
 
-        logger.info(f"Loaded model from {model_path}")
+        if not isinstance(model, cls):
+            raise ValueError(f"Type Error: expected object of type {cls.__name__} but got {model.__class__.__name__} " \
+                             f"from saved file {path}.")
+
+        logger.info(f"Loaded model from {path}")
         return model
+
 
     def setup_sentence(self, isent: IntegerizedSentence) -> None:
         """Precompute any quantities needed for forward/backward/Viterbi algorithms.
