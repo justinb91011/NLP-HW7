@@ -16,6 +16,7 @@ from jaxtyping import Float
 
 from tqdm import tqdm # type: ignore
 import pickle
+import time
 
 from integerize import Integerizer
 from corpus import BOS_TAG, BOS_WORD, EOS_TAG, EOS_WORD, Sentence, Tag, TaggedCorpus, IntegerizedSentence, Word
@@ -520,9 +521,9 @@ class HiddenMarkovModel:
         return tagged_sentence
 
     def save(self, path: Path|str, checkpoint=None, checkpoint_interval: int = 300) -> None:
-        """Save this model to the file named by path.  Or if checkpoint is not None, insert its 
+        """Save this model to the file named by path. Or if checkpoint is not None, insert its 
         string representation into the filename and save to a temporary checkpoint file (but only 
-        do this save if it's been at least checkpoint_interval seconds since the last save).  If 
+        do this save if it's been at least checkpoint_interval seconds since the last save). If 
         the save is successful, then remove the previous checkpoint file, if any."""
 
         if isinstance(path, str): path = Path(path)   # convert str argument to Path if needed
@@ -543,8 +544,8 @@ class HiddenMarkovModel:
         # update the elapsed training time since we started training or last saved (if that happened)
         if old_save_time is not None:
             self.total_training_time = old_total_training_time + (now - old_save_time)
-        del self._save_time
-        
+        self._save_time = now  # Ensure _save_time is initialized
+
         # Save the model with the fields set as above, so that we'll 
         # continue from it correctly when we reload it.
         try:
@@ -557,12 +558,12 @@ class HiddenMarkovModel:
             self._checkpoint_path    = old_checkpoint_path
             self.total_training_time = old_total_training_time
             raise e
-        
+
         # Since save was successful, remember it and remove old temp version (if any)
-        self._save_time = now
         if old_checkpoint_path: 
             try: os.remove(old_checkpoint_path)
             except FileNotFoundError: pass  # don't complain if the user already removed it manually
+
 
     @classmethod
     def load(cls, path: Path|str, device: str = 'cpu') -> HiddenMarkovModel:

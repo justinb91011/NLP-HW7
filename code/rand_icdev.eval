@@ -1,0 +1,9 @@
+Cross-entropy: 1.4331 nats (= perplexity 4.191)
+Cross-entropy: 0.6731 nats (= perplexity 1.960)
+Cross-entropy: 0.6729 nats (= perplexity 1.960)
+Total training time: 0:00:15
+---
+Wrote tagging to rand_icdev.output
+Cross-entropy: 0.6729 nats (= perplexity 1.960)
+Tagging accuracy: all: 51.515%, known: 51.515%, seen: nan%, novel: nan%
+===

@@ -28,3 +28,5 @@ Tagging accuracy: all: 64.437%, known: 97.027%, seen: nan%, novel: 33.453%
 
 python3 tag.py ../data/endev --train ../data/ensup-tiny --crf --lr .5 --rnn_dim 10 --eval_interval 100 --max_steps 4000
 INFO:eval:Tagging accuracy: all: 46.211%, known: 94.654%, seen: nan%, novel: 0.155%
+
+python3 tag.py ../data/icdev --train ../data/icsup --crf --rnn_dim 7 --eval_interval 200 --max_steps 2000 --lexicon ../data/words-10.txt --model rand.pkl
